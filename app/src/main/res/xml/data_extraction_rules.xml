@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- The meguanime.com login stays on this phone only. -->
+        <exclude domain="sharedpref" path="megu_account.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="megu_account.xml" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- The meguanime.com login stays on this phone only. -->
+    <exclude domain="sharedpref" path="megu_account.xml" />
+</full-backup-content>
