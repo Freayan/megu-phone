@@ -1,12 +1,14 @@
 name: Apply update and build
 
-# Runs by itself when you upload update.zip to the main page of the repository.
-# It unpacks the zip over your project, builds the app and publishes the APK
-# under "Releases". You can also start it by hand from the Actions tab.
+# Builds the app from project.zip with your latest update files laid on top,
+# then publishes the APK under "Releases".
+# Runs by itself when you upload update.zip or change this file.
+# You can also start it by hand from the Actions tab.
 on:
   push:
     paths:
       - 'update.zip'
+      - '.github/workflows/apply-update.yml'
   workflow_dispatch:
 
 permissions:
@@ -18,10 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unpack update.zip
+      - name: Keep any new update.zip in the repository
         run: |
           if [ -f update.zip ]; then
-            unzip -o update.zip
+            unzip -q -o update.zip
             rm -f update.zip
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -29,6 +31,17 @@ jobs:
             git commit -m "Apply update" || true
             git push
           fi
+
+      - name: Unpack project.zip and lay the update on top
+        run: |
+          mkdir -p work
+          unzip -q -o project.zip -d work
+          SETTINGS=$(find work -maxdepth 3 -name 'settings.gradle*' | head -n 1)
+          if [ -z "$SETTINGS" ]; then echo "No Gradle project found inside project.zip"; exit 1; fi
+          ROOT=$(dirname "$SETTINGS")
+          echo "ROOT=$ROOT" >> "$GITHUB_ENV"
+          if [ -d app ]; then cp -r app/. "$ROOT/app/"; fi
+          echo "Project folder: $ROOT"
 
       - uses: actions/setup-java@v4
         with:
@@ -40,14 +53,16 @@ jobs:
           gradle-version: '8.10.2'
 
       - name: Build the APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          cd "$ROOT"
+          gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Publish the APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk MeguAnimes-debug.apk
+          cp "$ROOT/app/build/outputs/apk/debug/app-debug.apk" MeguAnimes-debug.apk
           gh release create "phone-${{ github.run_number }}" MeguAnimes-debug.apk \
             --title "Phone build ${{ github.run_number }}" \
-            --notes "Built from the latest update." \
+            --notes "Built from project.zip plus the latest update." \
             --latest
