@@ -1,0 +1,53 @@
+name: Apply update and build
+
+# Runs by itself when you upload update.zip to the main page of the repository.
+# It unpacks the zip over your project, builds the app and publishes the APK
+# under "Releases". You can also start it by hand from the Actions tab.
+on:
+  push:
+    paths:
+      - 'update.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack update.zip
+        run: |
+          if [ -f update.zip ]; then
+            unzip -o update.zip
+            rm -f update.zip
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Apply update" || true
+            git push
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build the APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Publish the APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk MeguAnimes-debug.apk
+          gh release create "phone-${{ github.run_number }}" MeguAnimes-debug.apk \
+            --title "Phone build ${{ github.run_number }}" \
+            --notes "Built from the latest update." \
+            --latest
