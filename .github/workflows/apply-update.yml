@@ -1,54 +1,75 @@
-name: Apply update and build
+name: Build MeguAnimes
 
-# Builds the app from project.zip with your latest update files laid on top,
-# then publishes the APK under "Releases".
-# Runs by itself when you upload update.zip or change this file.
-# You can also start it by hand from the Actions tab.
+# HOW TO UPDATE THE APP (all from your phone, no commands):
+#   1. In this repository tap  Add file > Upload files  and pick the new update.zip.
+#      Keep the name update.zip: it replaces the old one.
+#   2. Tap Commit changes. The build starts by itself (Actions tab, about 5 minutes).
+#   3. Open Releases, then download the APK from the newest "Phone build".
+#
+# This builds project.zip with the files from update.zip laid on top.
+# It never changes anything in your repository.
 on:
   push:
     paths:
       - 'update.zip'
+      - 'project.zip'
       - '.github/workflows/apply-update.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: build-apk
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - name: Get the repository
+        uses: actions/checkout@v4
 
-      - name: Keep any new update.zip in the repository
+      - name: Unpack project.zip and lay update.zip on top
         run: |
-          if [ -f update.zip ]; then
-            unzip -q -o update.zip
-            rm -f update.zip
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "Apply update" || true
-            git push
-          fi
-
-      - name: Unpack project.zip and lay the update on top
-        run: |
-          mkdir -p work
+          set -e
+          if [ ! -f project.zip ]; then echo "project.zip is missing from the repository."; exit 1; fi
+          rm -rf work
+          mkdir work
           unzip -q -o project.zip -d work
           SETTINGS=$(find work -maxdepth 3 -name 'settings.gradle*' | head -n 1)
-          if [ -z "$SETTINGS" ]; then echo "No Gradle project found inside project.zip"; exit 1; fi
+          if [ -z "$SETTINGS" ]; then echo "No Gradle project found inside project.zip."; exit 1; fi
           ROOT=$(dirname "$SETTINGS")
           echo "ROOT=$ROOT" >> "$GITHUB_ENV"
-          if [ -d app ]; then cp -r app/. "$ROOT/app/"; fi
-          echo "Project folder: $ROOT"
+          if [ -f update.zip ]; then
+            if ! unzip -Z1 update.zip | grep -q '^app/'; then
+              echo "update.zip has no app/ folder at its top level. Upload the update.zip you were given, unchanged."
+              exit 1
+            fi
+            unzip -q -o update.zip -d "$ROOT"
+            echo "Laid update.zip on top of project.zip."
+          else
+            echo "No update.zip found: building project.zip as it is."
+          fi
+          VERSION=$(grep -m1 'versionName' "$ROOT/app/build.gradle.kts" | sed 's/.*"\(.*\)".*/\1/')
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Project folder: $ROOT  Version: $VERSION"
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" >> "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" >> "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
@@ -57,12 +78,16 @@ jobs:
           cd "$ROOT"
           gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Publish the APK
+      - name: Publish the APK under Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp "$ROOT/app/build/outputs/apk/debug/app-debug.apk" MeguAnimes-debug.apk
-          gh release create "phone-${{ github.run_number }}" MeguAnimes-debug.apk \
-            --title "Phone build ${{ github.run_number }}" \
-            --notes "Built from project.zip plus the latest update." \
+          set -e
+          APK="MeguAnimes-${VERSION}-build${{ github.run_number }}.apk"
+          cp "$ROOT/app/build/outputs/apk/debug/app-debug.apk" "$APK"
+          TAG="phone-${{ github.run_number }}"
+          if [ "${{ github.run_attempt }}" != "1" ]; then TAG="$TAG-retry${{ github.run_attempt }}"; fi
+          gh release create "$TAG" "$APK" \
+            --title "Phone build ${{ github.run_number }} (version ${VERSION})" \
+            --notes "MeguAnimes ${VERSION}, built from project.zip plus update.zip." \
             --latest
