@@ -76,7 +76,34 @@ jobs:
       - name: Build the APK
         run: |
           cd "$ROOT"
-          gradle :app:assembleDebug --no-daemon --stacktrace
+          set +e
+          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            # Put the real error messages on the run's summary page, where they are easy to find.
+            python3 - <<'PY'
+          import os, re
+          log = open(os.path.join(os.environ["GITHUB_WORKSPACE"], "build.log"), errors="replace").read().splitlines()
+          def esc(text):
+              return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          errs = [l for l in log if l.startswith("e: ") or " error: " in l or l.startswith("error:")]
+          errs = [re.sub(r"file://\S*?/app/", "app/", l) for l in errs]
+          if errs:
+              print("::error title=Compiler errors::" + esc("\n".join(errs[:30])))
+          out, grab = [], False
+          for l in log:
+              if l.startswith("* What went wrong"):
+                  grab = True
+                  continue
+              if grab:
+                  if l.startswith("* Try") or l.startswith("* Exception is"):
+                      break
+                  out.append(l)
+          if out:
+              print("::error title=What went wrong::" + esc("\n".join(out[:20])))
+          PY
+          fi
+          exit "$STATUS"
 
       - name: Publish the APK under Releases
         env:
